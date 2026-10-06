@@ -1,6 +1,6 @@
 #pragma once
 /*
- * Lone Echo mod API (loneecho.exe, March 2019 build).
+ * Lone Echo mod API (loneecho.exe: the March 2019 and April 2020 builds).
  *
  * A mod is a DLL in Lone Echo\bin\win7\mods\ that exports:
  *
@@ -14,11 +14,12 @@
  * second): return cached values from them and don't touch the game there.
  *
  * Addresses: loneecho.exe is relocated at run time; api->exe is its base, so a static address A (as in IDA/Ghidra
- * with image base 0x140000000) is api->exe + (A - 0x140000000).
+ * with image base 0x140000000) is api->exe + (A - 0x140000000). Static addresses differ between builds: check
+ * api->exeTimestamp (0x5C9D6E49 March 2019, 0x5E87A5F2 April 2020) before using your own.
  */
 #include <stdint.h>
 
-#define LEMOD_API_VERSION 2
+#define LEMOD_API_VERSION 3
 #define LEMOD_MAX_BUTTONS 12
 
 typedef struct LeModTransform
@@ -58,6 +59,9 @@ typedef struct LeModApi
     void* (*space)(int index);
     void* (*findSystem)(void* space, uint64_t typeHash);   /* a space's engine component system, or 0 */
     void (*runOnGameThread)(void (*fn)(void* arg), void* arg);  /* from any thread; runs at the next frame */
+
+    /* ---- version 3 ---- */
+    uint32_t exeTimestamp;                         /* loneecho.exe's PE timestamp: which build is running */
 } LeModApi;
 
 typedef struct LeModButton

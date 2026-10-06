@@ -43,8 +43,6 @@ namespace LeMods
 	// the movement settings: boost accel/power_cost/time/max_vel/recharge_time, iron_man = hand thrusters). ----
 	enum Tunable { BOOST_ACCEL, BOOST_POWER_COST, BOOST_TIME, BOOST_MAX_VEL, HAND_COST, HAND_MAX_VEL_ONE, HAND_MAX_VEL_TWO,
 		HAND_ACCEL, BOOST_RECHARGE, TUNABLES };
-	static const DWORD TUNE_RVA[TUNABLES] = { 0x14C84E4, 0x14C84E8, 0x14C84EC, 0x14C84F0, 0x14C84F4, 0x14C84F8, 0x14C84FC,
-		0x14C8500, 0x14C8504 };
 	static FLOAT g_tuneBase[TUNABLES];
 	static BOOL g_tuneCaptured = FALSE;
 	static BOOL g_noclipOn = FALSE, g_boostsOn = FALSE;
@@ -52,7 +50,7 @@ namespace LeMods
 	static FLOAT g_handSpeed = 3.0f;   // Boosts: hand thruster multiplier
 	static int g_boostLevel = 1;       // Boosts: 0 normal, 1 big, 2 huge
 
-	static FLOAT& Tune(Tunable t) { return *(FLOAT*)(g_exe + TUNE_RVA[t]); }
+	static FLOAT& Tune(Tunable t) { return *(FLOAT*)(g_exe + g_build->movementTuning + t * sizeof(FLOAT)); }
 
 	static VOID ApplyTuning()
 	{
@@ -104,7 +102,6 @@ namespace LeMods
 	typedef UINT64(__fastcall* ControllerStepFn)(BYTE* controller, FLOAT dt, VOID* a3, VOID* a4, VOID* a5);
 	typedef UINT64(__fastcall* ControllerSettleFn)(BYTE* controller, VOID* a2, VOID* a3, FLOAT dt, VOID* a5);
 	typedef VOID(__fastcall* ControllerReadBackFn)(BYTE* controller);
-	static const DWORD CONTROLLER_STEP = 0x6D89C0, CONTROLLER_SETTLE = 0x6D90D0, CONTROLLER_READ_BACK = 0x6D8680;
 	static const LONG RELEASE_STEPS = 5;
 	static ControllerStepFn g_originalStep = NULL;
 	static ControllerSettleFn g_originalSettle = NULL;
@@ -173,7 +170,6 @@ namespace LeMods
 	// They still hit walls, so with No clip on they're put on their targets every frame; otherwise, once it's off, the
 	// readback (head body) and the hands pull Jack back to wherever they got stuck. ----
 	typedef FLOAT* (__fastcall* BodyOriginFn)(BYTE* body, FLOAT* out);
-	static const DWORD BODY_ORIGIN = 0x20F540;
 	static const DWORD HAND_SLOTS[2][2] = { { 0x40A0, 0x4100 }, { 0x40B8, 0x4118 } };
 	static const DWORD HAND_OFFSETS = 0x4190;
 
@@ -204,7 +200,7 @@ namespace LeMods
 		__try
 		{
 			FLOAT tmp[4] = {};
-			memcpy(out, ((BodyOriginFn)(g_exe + BODY_ORIGIN))(body, tmp), 12);
+			memcpy(out, ((BodyOriginFn)(g_exe + g_build->bodyOrigin))(body, tmp), 12);
 			return isfinite(out[0]) && isfinite(out[1]) && isfinite(out[2]);
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) { return FALSE; }
@@ -258,11 +254,11 @@ namespace LeMods
 	{
 		if (g_originalStep == NULL)
 		{
-			g_originalStep = (ControllerStepFn)(g_exe + CONTROLLER_STEP);
+			g_originalStep = (ControllerStepFn)(g_exe + g_build->controllerStep);
 			Attach((VOID**)&g_originalStep, (VOID*)HookedStep, "player controller step");
-			g_originalSettle = (ControllerSettleFn)(g_exe + CONTROLLER_SETTLE);
+			g_originalSettle = (ControllerSettleFn)(g_exe + g_build->controllerSettle);
 			Attach((VOID**)&g_originalSettle, (VOID*)HookedSettle, "player controller settle");
-			g_originalReadBack = (ControllerReadBackFn)(g_exe + CONTROLLER_READ_BACK);
+			g_originalReadBack = (ControllerReadBackFn)(g_exe + g_build->controllerReadBack);
 			Attach((VOID**)&g_originalReadBack, (VOID*)HookedReadBack, "player controller read back");
 		}
 		InterlockedExchange(&g_releaseSteps, 0);
@@ -333,7 +329,6 @@ namespace LeMods
 	// Every button (CR14ButtonInteractCS, doors' panels included) in the loaded levels. Pressing one here does what a
 	// real press does: the button's OnPressStarted / OnPress / OnFullyDepressed events go to the level scripts.
 	static const UINT64 HASH_BUTTON = 0xF5574A730BBB0428ULL;
-	static const DWORD PRESS_STARTED = 0x5847C0, PRESS = 0x584740, FULLY_DEPRESSED = 0x5846C0;  // (cs, componentIndex)
 	typedef VOID(__fastcall* ButtonEventFn)(BYTE* cs, UINT64 index);
 
 	struct FoundButton { BYTE* cs; UINT16 index; UINT64 level; FLOAT pos[3]; FLOAT distance; };
@@ -410,9 +405,9 @@ namespace LeMods
 	{
 		__try
 		{
-			((ButtonEventFn)(g_exe + PRESS_STARTED))(cs, index);
-			((ButtonEventFn)(g_exe + PRESS))(cs, index);
-			((ButtonEventFn)(g_exe + FULLY_DEPRESSED))(cs, index);
+			((ButtonEventFn)(g_exe + g_build->pressStarted))(cs, index);
+			((ButtonEventFn)(g_exe + g_build->press))(cs, index);
+			((ButtonEventFn)(g_exe + g_build->fullyDepressed))(cs, index);
 			return TRUE;
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) { return FALSE; }
@@ -523,7 +518,6 @@ namespace LeMods
 	// Tools are run by Jack's tool ability manager (CR14ToolAbilityManagerCS): R14ActivateToolNode calls 0x1407cfc10
 	// (manager, component, tool type, state) with type 4 cutter, 5 scanner, 6 snapshot camera (0 puts the tool away).
 	static const UINT64 HASH_TOOL_MANAGER = 0xE4E954CFA69AFF02ULL;
-	static const DWORD ACTIVATE_TOOL = 0x7CFC10;
 	typedef VOID(__fastcall* ActivateToolFn)(BYTE* manager, UINT64 component, UINT64 type, UINT64 stateHash);
 	static const UINT64 STATE_CUTTER = 0x8576B6E26DD67601ULL;    // CR14CutterToolActiveState
 	static const UINT64 STATE_SCANNER = 0xFB507E87EF0AECDFULL;   // CR14ScanningToolPointScanState
@@ -533,7 +527,7 @@ namespace LeMods
 
 	static BOOL SafeActivateTool(BYTE* manager, int type, UINT64 state)
 	{
-		__try { ((ActivateToolFn)(g_exe + ACTIVATE_TOOL))(manager, 0, (UINT64)type, state); return TRUE; }
+		__try { ((ActivateToolFn)(g_exe + g_build->activateTool))(manager, 0, (UINT64)type, state); return TRUE; }
 		__except (EXCEPTION_EXECUTE_HANDLER) { return FALSE; }
 	}
 
@@ -588,7 +582,6 @@ namespace LeMods
 	// Every player death goes through Kill(navCS, index, cause, bodyPart, ...) (0x1405154d0; the deferred path queues
 	// the same call). cause indexes the damage-type names at 0x1414c82a0 ("radiation", "crushing", "electrical"...),
 	// read with 0x14008d1f0. Immunity skips Kill for Jack: for every cause, or only for radiation.
-	static const DWORD KILL = 0x5154D0, CAUSE_NAMES = 0x14C82A0, SYMBOL_NAME = 0x8D1F0;
 	typedef UINT64(__fastcall* KillFn)(BYTE* cs, UINT64 index, UINT64 cause, UINT64 part, UINT64 a5, UINT64 a6, UINT64 a7, UINT64 a8);
 	typedef const CHAR* (__fastcall* SymbolNameFn)(VOID* symbol);
 	static KillFn g_originalKill = NULL;
@@ -602,7 +595,7 @@ namespace LeMods
 			return "?";
 		__try
 		{
-			const CHAR* name = ((SymbolNameFn)(g_exe + SYMBOL_NAME))(g_exe + CAUSE_NAMES + cause * 8);
+			const CHAR* name = ((SymbolNameFn)(g_exe + g_build->symbolName))(g_exe + g_build->causeNames + cause * 8);
 			return name != NULL ? name : "?";
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) { return "?"; }
@@ -638,7 +631,7 @@ namespace LeMods
 	{
 		if (g_originalKill == NULL)
 		{
-			g_originalKill = (KillFn)(g_exe + KILL);
+			g_originalKill = (KillFn)(g_exe + g_build->kill);
 			Attach((VOID**)&g_originalKill, (VOID*)HookedKill, "player death");
 		}
 		InterlockedExchange(&g_immuneOn, 1);
@@ -679,7 +672,7 @@ namespace LeMods
 	// ==== Freeze ====
 	// Loose objects: pinned where they were (put back, still, every frame). Characters (robots, people): their level's
 	// animation systems stop (every character in that level freezes).
-	static const DWORD RUN_JOB = 0x2D6A80;  // every per-frame job: (task, data); data+8 -> job entry, first field the CS
+	// g_build->runJob: every per-frame job, (task, data); data+8 -> job entry, first field the CS.
 	static const UINT64 HASH_PHYSICS = 0x5B8CC538E22AD937ULL;
 	typedef UINT64(__fastcall* RunJobFn)(BYTE* task, BYTE* data, UINT64 a3, UINT64 a4);
 	static RunJobFn g_originalRunJob = NULL;
@@ -789,7 +782,7 @@ namespace LeMods
 		}
 		if (g_originalRunJob == NULL)
 		{
-			g_originalRunJob = (RunJobFn)(g_exe + RUN_JOB);
+			g_originalRunJob = (RunJobFn)(g_exe + g_build->runJob);
 			Attach((VOID**)&g_originalRunJob, (VOID*)FilteredRunJob, "job filter");
 		}
 		if (std::find(g_frozenSpaces.begin(), g_frozenSpaces.end(), bestSpace) == g_frozenSpaces.end())

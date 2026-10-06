@@ -12,6 +12,28 @@ namespace LeMods
 	extern VOID(*g_log)(const CHAR* format, ...);
 	extern LeModApi g_api;
 
+	/// Static addresses in one build of loneecho.exe, as RVAs (VA - 0x140000000). The builds differ only in where
+	/// things are; the code and the data layouts the loader uses are the same.
+	struct GameBuild
+	{
+		DWORD timestamp;          // PE header TimeDateStamp
+		const CHAR* name;
+		DWORD gameVtable;         // CR14Game (slot 0x140: Update(game, phase))
+		DWORD frameTimerVtable;   // CClock (slot 1: Tick(timer); timer+0x38 = time scale)
+		DWORD findSpace;          // FindGameSpace(game, levelHash)
+		DWORD findEngineSystem;   // EngineComponentSystem(space, typeHash)
+		DWORD navHead, navHand;   // player nav: head / hand world transforms
+		DWORD globalLevel;        // UINT64 hash of r14_glb_global (Jack's level)
+		DWORD physicsHandle, resolveBody, setBody;
+		DWORD movementTuning;     // the 9 movement floats (boost accel ... boost recharge time)
+		DWORD controllerStep, controllerSettle, controllerReadBack, bodyOrigin;
+		DWORD pressStarted, press, fullyDepressed;  // button events (cs, componentIndex)
+		DWORD activateTool;       // tool ability manager: (manager, component, type, state)
+		DWORD kill, causeNames, symbolName;
+		DWORD runJob;             // every per-frame job: (task, data)
+	};
+	extern const GameBuild* g_build;
+
 	// ---- Engine layouts (see J:\LE1store\coop_re_notes.md) ----
 	struct Trs { FLOAT rot[4]; FLOAT pos[3]; FLOAT scale[3]; BYTE pad[8]; };
 	static const SIZE_T NAV_ENTRY_SIZE = 0x988;

@@ -12,13 +12,33 @@ namespace LeMods
 	LeModApi g_api = {};
 	static BYTE* volatile g_game = NULL;
 
-	static const DWORD GAME_VTABLE = 0xB8E4B8, SLOT_UPDATE = 0x140;   // CR14Game::Update(game, phase)
-	static const DWORD FRAME_TIMER_VTABLE = 0xBB6410;                 // slot 1: Tick(timer); timer+0x38 = time scale
-	static const DWORD FIND_SPACE = 0x2DDA70;                         // FindGameSpace(game, levelHash)
-	static const DWORD FIND_ENGINE_SYSTEM = 0xAB2A0;                  // EngineComponentSystem(space, typeHash)
-	static const DWORD NAV_HEAD = 0x510C50, NAV_HAND = 0x510540;      // player nav: head / hand world transforms
-	static const DWORD SP_GLOBAL_LEVEL = 0x14A7088;                   // UINT64 hash of r14_glb_global (Jack's level)
-	static const DWORD PHYSICS_HANDLE = 0x2A0480, RESOLVE_BODY = 0x157F20, SET_BODY = 0x181C80;
+	// The supported builds. April 2020's addresses were found by matching every function the loader uses (whole body,
+	// relative offsets masked), the vtables by their RTTI names, and the globals through the code that reads them.
+	static const GameBuild BUILDS[] = {
+		{ 0x5C9D6E49, "March 2019", 0xB8E4B8, 0xBB6410, 0x2DDA70, 0xAB2A0, 0x510C50, 0x510540, 0x14A7088, 0x2A0480, 0x157F20,
+			0x181C80, 0x14C84E4, 0x6D89C0, 0x6D90D0, 0x6D8680, 0x20F540, 0x5847C0, 0x584740, 0x5846C0, 0x7CFC10, 0x5154D0,
+			0x14C82A0, 0x8D1F0, 0x2D6A80 },
+		{ 0x5E87A5F2, "April 2020", 0xB8E4B8, 0xBB6400, 0x2DDEF0, 0xAB240, 0x511080, 0x510970, 0x14A7088, 0x2A03D0, 0x1579B0,
+			0x181910, 0x14C84E4, 0x6D9270, 0x6D9980, 0x6D8F30, 0x20F1B0, 0x584C00, 0x584B80, 0x584B00, 0x7D04F0, 0x5158B0,
+			0x14C82A0, 0x8D1C0, 0x2D6EB0 },
+	};
+	const GameBuild* g_build = NULL;
+	static const DWORD SLOT_UPDATE = 0x140;
+
+	static const GameBuild* FindBuild(DWORD timestamp)
+	{
+		for (const GameBuild& b : BUILDS)
+			if (b.timestamp == timestamp)
+				return &b;
+		return NULL;
+	}
+
+	const CHAR* BuildName(DWORD exeTimestamp)
+	{
+		const GameBuild* b = FindBuild(exeTimestamp);
+		return b == NULL ? NULL : b->name;
+	}
+
 	static const UINT64 HASH_PLAYER_NAV = 0x559BE58A8EB1033CULL, HASH_PHYSICS = 0x5B8CC538E22AD937ULL;
 
 	typedef UINT64(__fastcall* UpdateFn)(BYTE* game, UINT64 phase);
@@ -40,7 +60,7 @@ namespace LeMods
 
 	BYTE* FindSystem(BYTE* space, UINT64 typeHash)
 	{
-		return space == NULL ? NULL : ((FindSystemFn)(g_exe + FIND_ENGINE_SYSTEM))(space, typeHash);
+		return space == NULL ? NULL : ((FindSystemFn)(g_exe + g_build->findEngineSystem))(space, typeHash);
 	}
 
 	UINT64 SpaceLevel(BYTE* space) { return space == NULL ? 0 : *(UINT64*)(space + 0xD8); }
@@ -48,7 +68,7 @@ namespace LeMods
 	BYTE* GlobalSpace()
 	{
 		BYTE* game = g_game;
-		return game == NULL ? NULL : ((FindSpaceFn)(g_exe + FIND_SPACE))(game, *(UINT64*)(g_exe + SP_GLOBAL_LEVEL));
+		return game == NULL ? NULL : ((FindSpaceFn)(g_exe + g_build->findSpace))(game, *(UINT64*)(g_exe + g_build->globalLevel));
 	}
 
 	BYTE* PlayerNav()
@@ -72,7 +92,7 @@ namespace LeMods
 		BYTE* nav = PlayerNav();
 		if (nav == NULL)
 			return FALSE;
-		((NavHeadFn)(g_exe + NAV_HEAD))(nav, out, 0);
+		((NavHeadFn)(g_exe + g_build->navHead))(nav, out, 0);
 		return TRUE;
 	}
 
@@ -81,7 +101,7 @@ namespace LeMods
 		BYTE* nav = PlayerNav();
 		if (nav == NULL)
 			return FALSE;
-		((NavHandFn)(g_exe + NAV_HAND))(nav, out, 0, hand != 0 ? 1 : 0, 1);
+		((NavHandFn)(g_exe + g_build->navHand))(nav, out, 0, hand != 0 ? 1 : 0, 1);
 		return TRUE;
 	}
 
@@ -100,8 +120,8 @@ namespace LeMods
 	BYTE* ResolveBody(BYTE* physics, UINT16 index)
 	{
 		BYTE handle[0x40] = {};
-		BYTE* h = ((PhysicsHandleFn)(g_exe + PHYSICS_HANDLE))(physics, handle, index);
-		return h == NULL ? NULL : ((ResolveBodyFn)(g_exe + RESOLVE_BODY))(h);
+		BYTE* h = ((PhysicsHandleFn)(g_exe + g_build->physicsHandle))(physics, handle, index);
+		return h == NULL ? NULL : ((ResolveBodyFn)(g_exe + g_build->resolveBody))(h);
 	}
 
 	static BYTE* SpaceAt(UINT64 i)
@@ -187,7 +207,7 @@ namespace LeMods
 		memcpy(p, position ? position : (const float*)(b + 0x938), sizeof(p));
 		memcpy(r, rotation ? rotation : (const float*)(b + 0xC00), sizeof(r));
 		if (position || rotation)
-			((SetBodyFn)(g_exe + SET_BODY))(b, p, r);
+			((SetBodyFn)(g_exe + g_build->setBody))(b, p, r);
 		if (velocity)
 			memcpy(b + 0x950, velocity, 12);
 	}
@@ -417,8 +437,11 @@ namespace LeMods
 		VirtualProtect(slot, sizeof(VOID*), old, &old);
 	}
 
-	VOID Install(BYTE* exe, VOID(*log)(const CHAR* format, ...))
+	VOID Install(BYTE* exe, DWORD exeTimestamp, VOID(*log)(const CHAR* format, ...))
 	{
+		g_build = FindBuild(exeTimestamp);
+		if (g_build == NULL)
+			return;
 		g_exe = exe;
 		g_log = log;
 		g_api.version = LEMOD_API_VERSION;
@@ -438,9 +461,10 @@ namespace LeMods
 		g_api.space = ApiSpace;
 		g_api.findSystem = ApiFindSystem;
 		g_api.runOnGameThread = ApiRunOnGameThread;
+		g_api.exeTimestamp = exeTimestamp;
 
-		PatchVtableSlot((VOID**)(exe + GAME_VTABLE + SLOT_UPDATE), (VOID*)HookedUpdate, (VOID**)&g_originalUpdate);
-		PatchVtableSlot((VOID**)(exe + FRAME_TIMER_VTABLE + 8), (VOID*)HookedTick, (VOID**)&g_originalTick);
+		PatchVtableSlot((VOID**)(exe + g_build->gameVtable + SLOT_UPDATE), (VOID*)HookedUpdate, (VOID**)&g_originalUpdate);
+		PatchVtableSlot((VOID**)(exe + g_build->frameTimerVtable + 8), (VOID*)HookedTick, (VOID**)&g_originalTick);
 		RegisterBuiltIns();
 		StartWindow(LoadAndStart);
 	}

@@ -88,9 +88,6 @@ extern "C"
 	}
 }
 
-/// loneecho.exe's build (March 2019, its PE timestamp): the only one the mod loader's addresses are for.
-static const DWORD LONE_ECHO_TIMESTAMP = 0x5C9D6E49;
-
 static DWORD ExeTimestamp(BYTE* exe)
 {
 	IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)exe;
@@ -110,15 +107,18 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
 	file = file != NULL ? file + 1 : name;
 	if (_stricmp(file, "loneecho.exe") != 0)
 		return TRUE;  // some other program loaded this dinput8.dll: just pass DirectInput through
-	if (ExeTimestamp(exe) != LONE_ECHO_TIMESTAMP)
+	DWORD timestamp = ExeTimestamp(exe);
+	const CHAR* build = LeMods::BuildName(timestamp);
+	if (build == NULL)
 	{
-		Log("Lone Echo Mod Loader: this loneecho.exe isn't the March 2019 build (timestamp %08lX); mods are off", ExeTimestamp(exe));
+		Log("Lone Echo Mod Loader: unsupported loneecho.exe build (timestamp %08lX; supported: March 2019 5C9D6E49, "
+			"April 2020 5E87A5F2); mods are off", timestamp);
 		return TRUE;
 	}
 	// A dedicated server (EchoRelay's -mp) has no player: no mods there.
 	if (wcsstr(GetCommandLineW(), L" -mp") != NULL || wcsstr(GetCommandLineW(), L"-nomods") != NULL)
 		return TRUE;
-	Log("Lone Echo Mod Loader starting");
-	LeMods::Install(exe, Log);
+	Log("Lone Echo Mod Loader starting (loneecho.exe %s build)", build);
+	LeMods::Install(exe, timestamp, Log);
 	return TRUE;
 }

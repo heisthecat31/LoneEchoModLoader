@@ -7,6 +7,10 @@
 /// </summary>
 namespace LeMods
 {
-	/// Installs the loader. Call once, from the rad14 patch set, for the Lone Echo build when it isn't a server.
-	VOID Install(BYTE* exe, VOID(*log)(const CHAR* format, ...));
+	/// The name of the loneecho.exe build with this PE timestamp ("March 2019", "April 2020"), or NULL if the mod loader
+	/// has no addresses for it.
+	const CHAR* BuildName(DWORD exeTimestamp);
+
+	/// Installs the loader. Call once, for a supported build (BuildName isn't NULL) when it isn't a server.
+	VOID Install(BYTE* exe, DWORD exeTimestamp, VOID(*log)(const CHAR* format, ...));
 }
