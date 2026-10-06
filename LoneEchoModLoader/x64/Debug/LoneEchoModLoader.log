@@ -1,0 +1,8 @@
+﻿  dllmain.cpp
+  lemods.cpp
+  Generating Code...
+     Creating library J:\EchoVR-Tools-Launcher\LoneEchoModLoader\x64\Debug\dinput8.lib and object J:\EchoVR-Tools-Launcher\LoneEchoModLoader\x64\Debug\dinput8.exp
+lemods.obj : error LNK2019: unresolved external symbol "void __cdecl LeMods::RefreshWindow(void)" (?RefreshWindow@LeMods@@YAXXZ) referenced in function "public: __cdecl `void __cdecl LeMods::RequestButton(unsigned __int64,int)'::`2'::<lambda_1>::operator()(void)const " (??R<lambda_1>@?1??RequestButton@LeMods@@YAX_KH@Z@QEBA@XZ)
+lemods.obj : error LNK2019: unresolved external symbol "void __cdecl LeMods::RegisterBuiltIns(void)" (?RegisterBuiltIns@LeMods@@YAXXZ) referenced in function "void __cdecl LeMods::Install(unsigned char *,void (__cdecl*)(char const *,...))" (?Install@LeMods@@YAXPEAEP6AXPEBDZZ@Z)
+lemods.obj : error LNK2019: unresolved external symbol "void __cdecl LeMods::StartWindow(void (__cdecl*)(void))" (?StartWindow@LeMods@@YAXP6AXXZ@Z) referenced in function "void __cdecl LeMods::Install(unsigned char *,void (__cdecl*)(char const *,...))" (?Install@LeMods@@YAXPEAEP6AXPEBDZZ@Z)
+J:\EchoVR-Tools-Launcher\LoneEchoModLoader\x64\Debug\dinput8.dll : fatal error LNK1120: 3 unresolved externals
