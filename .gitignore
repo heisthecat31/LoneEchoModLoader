@@ -1,52 +1,40 @@
-# Prerequisites
-*.d
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+ipch/
 
-# Object files
-*.o
-*.ko
+# Build output (x64/Debug, x64/Release, LoneEchoModLoader/x64, intermediate folders)
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww]in32/
+LoneEchoModLoader/LoneEcho.*/
+*.tlog
+*.lastbuildstate
+*.recipe
+*.log
+
+# Compiler and linker files
 *.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
+*.o
 *.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
-*.dSYM/
-*.su
+*.ipch
 *.idb
 *.pdb
+*.ilk
+*.iobj
+*.ipdb
+*.exp
+*.lib
+*.map
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# Binaries
+*.dll
+*.exe
+
+# NuGet packages (restored from packages.config)
+packages/

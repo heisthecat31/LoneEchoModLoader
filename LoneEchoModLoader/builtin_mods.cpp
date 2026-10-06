@@ -88,40 +88,71 @@ namespace LeMods
 	static VOID ClearLock(BYTE* player, int lock) { if (player != NULL) player[NAV_LOCKS + lock] = 0; }
 
 	// ==== No clip ====
-	// Jack's collision is his head controller (player record +8): each frame the nav job steps it (0x1406d89c0: moves it
-	// by velocity * dt, then resolves collisions) and moves the player by however far it went. With No clip on, Jack's
-	// controller moves by velocity * dt and nothing else.
+	// Jack's collision is his head controller (player record +8: position +0x60, velocity +0x70), a mirror of the head
+	// that drives a physics proxy. Before physics the nav job (0x14051b000) copies the head into it and steps it
+	// (0x1406d89c0: position += velocity * dt, proxy teleported there). After physics the second nav job (0x1405197a0)
+	// settles it (0x1406d90d0: velocity = how the proxy actually moved), reads the proxy's solved position back
+	// (0x1406d8680) and moves Jack by however far that is from his head, velocity included. That readback is the
+	// collision. With No clip on, the settle and the readback get the stepped position and velocity back, so Jack goes
+	// wherever his velocity takes him.
 	typedef UINT64(__fastcall* ControllerStepFn)(BYTE* controller, FLOAT dt, VOID* a3, VOID* a4, VOID* a5);
+	typedef UINT64(__fastcall* ControllerSettleFn)(BYTE* controller, VOID* a2, VOID* a3, FLOAT dt, VOID* a5);
+	typedef VOID(__fastcall* ControllerReadBackFn)(BYTE* controller);
+	static const DWORD CONTROLLER_STEP = 0x6D89C0, CONTROLLER_SETTLE = 0x6D90D0, CONTROLLER_READ_BACK = 0x6D8680;
 	static ControllerStepFn g_originalStep = NULL;
+	static ControllerSettleFn g_originalSettle = NULL;
+	static ControllerReadBackFn g_originalReadBack = NULL;
 	static BYTE* volatile g_noclipController = NULL;
+	static FLOAT g_flyPosition[3], g_flyVelocity[3];
+	static volatile LONG g_flyStepped = 0;  // the step ran this frame and the readback hasn't used it yet
 	static StatusText g_noclipStatus;
+
+	static BOOL IsNoclipController(BYTE* controller) { return controller != NULL && controller == g_noclipController; }
 
 	static UINT64 __fastcall HookedStep(BYTE* controller, FLOAT dt, VOID* a3, VOID* a4, VOID* a5)
 	{
-		if (controller == NULL || controller != g_noclipController)
-			return g_originalStep(controller, dt, a3, a4, a5);
-		// The game's step runs as usual (it also moves the controller's physics proxy); then the collision response is
-		// undone: the controller ends where its velocity took it, still moving.
-		FLOAT* position = (FLOAT*)(controller + 0x60);
-		FLOAT* velocity = (FLOAT*)(controller + 0x70);
-		FLOAT start[3], moving[3];
-		memcpy(start, position, sizeof(start));
-		memcpy(moving, velocity, sizeof(moving));
 		UINT64 result = g_originalStep(controller, dt, a3, a4, a5);
-		for (int i = 0; i < 3; i++)
+		if (IsNoclipController(controller))
 		{
-			position[i] = start[i] + moving[i] * dt;
-			velocity[i] = moving[i];
+			memcpy(g_flyPosition, controller + 0x60, sizeof(g_flyPosition));
+			memcpy(g_flyVelocity, controller + 0x70, sizeof(g_flyVelocity));
+			InterlockedExchange(&g_flyStepped, 1);
 		}
 		return result;
+	}
+
+	static UINT64 __fastcall HookedSettle(BYTE* controller, VOID* a2, VOID* a3, FLOAT dt, VOID* a5)
+	{
+		if (!IsNoclipController(controller) || !g_flyStepped)
+			return g_originalSettle(controller, a2, a3, dt, a5);
+		// +0x164: the game teleported Jack this frame (the settle stops him); leave that alone.
+		BOOL teleported = *(DWORD*)(controller + 0x164) != 0;
+		UINT64 result = g_originalSettle(controller, a2, a3, dt, a5);
+		if (teleported)
+			InterlockedExchange(&g_flyStepped, 0);
+		else
+			memcpy(controller + 0x70, g_flyVelocity, sizeof(g_flyVelocity));
+		return result;
+	}
+
+	static VOID __fastcall HookedReadBack(BYTE* controller)
+	{
+		if (IsNoclipController(controller) && InterlockedExchange(&g_flyStepped, 0))
+			memcpy(controller + 0x60, g_flyPosition, sizeof(g_flyPosition));
+		else
+			g_originalReadBack(controller);
 	}
 
 	static VOID NoclipEnable()
 	{
 		if (g_originalStep == NULL)
 		{
-			g_originalStep = (ControllerStepFn)(g_exe + 0x6D89C0);
+			g_originalStep = (ControllerStepFn)(g_exe + CONTROLLER_STEP);
 			Attach((VOID**)&g_originalStep, (VOID*)HookedStep, "player controller step");
+			g_originalSettle = (ControllerSettleFn)(g_exe + CONTROLLER_SETTLE);
+			Attach((VOID**)&g_originalSettle, (VOID*)HookedSettle, "player controller settle");
+			g_originalReadBack = (ControllerReadBackFn)(g_exe + CONTROLLER_READ_BACK);
+			Attach((VOID**)&g_originalReadBack, (VOID*)HookedReadBack, "player controller read back");
 		}
 		g_noclipOn = TRUE;
 		ApplyTuning();
@@ -130,6 +161,7 @@ namespace LeMods
 	static VOID NoclipDisable()
 	{
 		g_noclipController = NULL;
+		InterlockedExchange(&g_flyStepped, 0);
 		g_noclipOn = FALSE;
 		ApplyTuning();
 	}
