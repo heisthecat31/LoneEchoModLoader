@@ -95,16 +95,22 @@ namespace LeMods
 	// (0x1406d8680) and moves Jack by however far that is from his head, velocity included. That readback is the
 	// collision. With No clip on, the settle and the readback get the stepped position and velocity back, so Jack goes
 	// wherever his velocity takes him.
+	// The proxy itself still stops at walls, so switching off teleports it to Jack (0x1406d86c0, what the game uses when
+	// it places Jack; it also stops him) and keeps the readback for a few more steps while the proxy catches up.
 	typedef UINT64(__fastcall* ControllerStepFn)(BYTE* controller, FLOAT dt, VOID* a3, VOID* a4, VOID* a5);
 	typedef UINT64(__fastcall* ControllerSettleFn)(BYTE* controller, VOID* a2, VOID* a3, FLOAT dt, VOID* a5);
 	typedef VOID(__fastcall* ControllerReadBackFn)(BYTE* controller);
-	static const DWORD CONTROLLER_STEP = 0x6D89C0, CONTROLLER_SETTLE = 0x6D90D0, CONTROLLER_READ_BACK = 0x6D8680;
+	typedef VOID(__fastcall* ControllerTeleportFn)(BYTE* controller, const Trs* head);
+	static const DWORD CONTROLLER_STEP = 0x6D89C0, CONTROLLER_SETTLE = 0x6D90D0, CONTROLLER_READ_BACK = 0x6D8680,
+		CONTROLLER_TELEPORT = 0x6D86C0;
+	static const LONG RELEASE_STEPS = 3;
 	static ControllerStepFn g_originalStep = NULL;
 	static ControllerSettleFn g_originalSettle = NULL;
 	static ControllerReadBackFn g_originalReadBack = NULL;
 	static BYTE* volatile g_noclipController = NULL;
-	static FLOAT g_flyPosition[3], g_flyVelocity[3];
+	static FLOAT g_flyPosition[3], g_flyVelocity[3], g_releasePosition[3];
 	static volatile LONG g_flyStepped = 0;  // the step ran this frame and the readback hasn't used it yet
+	static volatile LONG g_releaseSteps = 0;  // switched off: steps left before the game's collision takes over again
 	static StatusText g_noclipStatus;
 
 	static BOOL IsNoclipController(BYTE* controller) { return controller != NULL && controller == g_noclipController; }
@@ -114,6 +120,12 @@ namespace LeMods
 		UINT64 result = g_originalStep(controller, dt, a3, a4, a5);
 		if (IsNoclipController(controller))
 		{
+			if (g_releaseSteps > 0 && InterlockedDecrement(&g_releaseSteps) == 0)
+			{
+				g_noclipController = NULL;
+				InterlockedExchange(&g_flyStepped, 0);
+				return result;
+			}
 			memcpy(g_flyPosition, controller + 0x60, sizeof(g_flyPosition));
 			memcpy(g_flyVelocity, controller + 0x70, sizeof(g_flyVelocity));
 			InterlockedExchange(&g_flyStepped, 1);
@@ -123,7 +135,7 @@ namespace LeMods
 
 	static UINT64 __fastcall HookedSettle(BYTE* controller, VOID* a2, VOID* a3, FLOAT dt, VOID* a5)
 	{
-		if (!IsNoclipController(controller) || !g_flyStepped)
+		if (!IsNoclipController(controller) || !g_flyStepped || g_releaseSteps > 0)
 			return g_originalSettle(controller, a2, a3, dt, a5);
 		// +0x164: the game teleported Jack this frame (the settle stops him); leave that alone.
 		BOOL teleported = *(DWORD*)(controller + 0x164) != 0;
@@ -137,8 +149,12 @@ namespace LeMods
 
 	static VOID __fastcall HookedReadBack(BYTE* controller)
 	{
-		if (IsNoclipController(controller) && InterlockedExchange(&g_flyStepped, 0))
+		if (!IsNoclipController(controller))
+			g_originalReadBack(controller);
+		else if (InterlockedExchange(&g_flyStepped, 0))
 			memcpy(controller + 0x60, g_flyPosition, sizeof(g_flyPosition));
+		else if (g_releaseSteps > 0)
+			memcpy(controller + 0x60, g_releasePosition, sizeof(g_releasePosition));
 		else
 			g_originalReadBack(controller);
 	}
@@ -154,16 +170,36 @@ namespace LeMods
 			g_originalReadBack = (ControllerReadBackFn)(g_exe + CONTROLLER_READ_BACK);
 			Attach((VOID**)&g_originalReadBack, (VOID*)HookedReadBack, "player controller read back");
 		}
+		InterlockedExchange(&g_releaseSteps, 0);
 		g_noclipOn = TRUE;
 		ApplyTuning();
 	}
 
+	static BOOL SafeTeleport(BYTE* controller, const Trs* head)
+	{
+		__try { ((ControllerTeleportFn)(g_exe + CONTROLLER_TELEPORT))(controller, head); return TRUE; }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return FALSE; }
+	}
+
 	static VOID NoclipDisable()
 	{
-		g_noclipController = NULL;
-		InterlockedExchange(&g_flyStepped, 0);
 		g_noclipOn = FALSE;
 		ApplyTuning();
+		BYTE* player = PlayerEntry();
+		BYTE* controller = player == NULL ? NULL : *(BYTE**)(player + 8);
+		Trs head = {};
+		if (controller == NULL || controller != g_noclipController || !Head(&head))
+		{
+			g_noclipController = NULL;
+			InterlockedExchange(&g_flyStepped, 0);
+			return;
+		}
+		// Bring the proxy to where Jack is now, so the collision doesn't pull him back to where it got stuck.
+		memcpy(g_releasePosition, head.pos, sizeof(g_releasePosition));
+		BOOL ok = SafeTeleport(controller, &head);
+		g_log("[MODS] No clip: collision proxy moved to (%.1f %.1f %.1f)%s", head.pos[0], head.pos[1], head.pos[2],
+			ok ? "" : " (exception)");
+		InterlockedExchange(&g_releaseSteps, RELEASE_STEPS);
 	}
 
 	static VOID NoclipFrame(void*)
