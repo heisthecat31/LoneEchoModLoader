@@ -87,6 +87,12 @@ namespace LeMods
 
 	static VOID ClearLock(BYTE* player, int lock) { if (player != NULL) player[NAV_LOCKS + lock] = 0; }
 
+	static FLOAT Distance(const FLOAT* a, const FLOAT* b)
+	{
+		FLOAT dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+		return sqrtf(dx * dx + dy * dy + dz * dz);
+	}
+
 	// ==== No clip ====
 	// Jack's collision is his head controller (player record +8: position +0x60, velocity +0x70), a mirror of the head
 	// that drives a physics proxy. Before physics the nav job (0x14051b000) copies the head into it and steps it
@@ -95,15 +101,11 @@ namespace LeMods
 	// (0x1406d8680) and moves Jack by however far that is from his head, velocity included. That readback is the
 	// collision. With No clip on, the settle and the readback get the stepped position and velocity back, so Jack goes
 	// wherever his velocity takes him.
-	// The proxy itself still stops at walls, so switching off teleports it to Jack (0x1406d86c0, what the game uses when
-	// it places Jack; it also stops him) and keeps the readback for a few more steps while the proxy catches up.
 	typedef UINT64(__fastcall* ControllerStepFn)(BYTE* controller, FLOAT dt, VOID* a3, VOID* a4, VOID* a5);
 	typedef UINT64(__fastcall* ControllerSettleFn)(BYTE* controller, VOID* a2, VOID* a3, FLOAT dt, VOID* a5);
 	typedef VOID(__fastcall* ControllerReadBackFn)(BYTE* controller);
-	typedef VOID(__fastcall* ControllerTeleportFn)(BYTE* controller, const Trs* head);
-	static const DWORD CONTROLLER_STEP = 0x6D89C0, CONTROLLER_SETTLE = 0x6D90D0, CONTROLLER_READ_BACK = 0x6D8680,
-		CONTROLLER_TELEPORT = 0x6D86C0;
-	static const LONG RELEASE_STEPS = 3;
+	static const DWORD CONTROLLER_STEP = 0x6D89C0, CONTROLLER_SETTLE = 0x6D90D0, CONTROLLER_READ_BACK = 0x6D8680;
+	static const LONG RELEASE_STEPS = 5;
 	static ControllerStepFn g_originalStep = NULL;
 	static ControllerSettleFn g_originalSettle = NULL;
 	static ControllerReadBackFn g_originalReadBack = NULL;
@@ -114,17 +116,22 @@ namespace LeMods
 	static StatusText g_noclipStatus;
 
 	static BOOL IsNoclipController(BYTE* controller) { return controller != NULL && controller == g_noclipController; }
+	static VOID PinBodies(BYTE* controller);
 
 	static UINT64 __fastcall HookedStep(BYTE* controller, FLOAT dt, VOID* a3, VOID* a4, VOID* a5)
 	{
 		UINT64 result = g_originalStep(controller, dt, a3, a4, a5);
 		if (IsNoclipController(controller))
 		{
-			if (g_releaseSteps > 0 && InterlockedDecrement(&g_releaseSteps) == 0)
+			if (g_releaseSteps > 0)
 			{
-				g_noclipController = NULL;
-				InterlockedExchange(&g_flyStepped, 0);
-				return result;
+				PinBodies(controller);
+				if (InterlockedDecrement(&g_releaseSteps) == 0)
+				{
+					g_noclipController = NULL;
+					InterlockedExchange(&g_flyStepped, 0);
+					return result;
+				}
 			}
 			memcpy(g_flyPosition, controller + 0x60, sizeof(g_flyPosition));
 			memcpy(g_flyVelocity, controller + 0x70, sizeof(g_flyVelocity));
@@ -159,6 +166,94 @@ namespace LeMods
 			g_originalReadBack(controller);
 	}
 
+	// ---- Bodies that still collide: Jack's head body (the controller's rigid body, physics system +0x20 / index +0x28;
+	// the settle reads its velocity, the readback its position) and two pairs of hand bodies in the controller's physics
+	// world ([[controller]+8]; slots +0x40a0 / +0x4100 and +0x40b8 / +0x4118, driven toward the controller minus an
+	// offset the game keeps at +0x4190 + 0x20 * pair, as the step at 0x1406d89c0 and the teleport at 0x1406d86c0 do).
+	// They still hit walls, so with No clip on they're put on their targets every frame; otherwise, once it's off, the
+	// readback (head body) and the hands pull Jack back to wherever they got stuck. ----
+	typedef FLOAT* (__fastcall* BodyOriginFn)(BYTE* body, FLOAT* out);
+	static const DWORD BODY_ORIGIN = 0x20F540;
+	static const DWORD HAND_SLOTS[2][2] = { { 0x40A0, 0x4100 }, { 0x40B8, 0x4118 } };
+	static const DWORD HAND_OFFSETS = 0x4190;
+
+	static BYTE* HandBodyAt(BYTE* world, DWORD slot)
+	{
+		__try
+		{
+			DWORD index = *(DWORD*)(world + slot);
+			return *(BYTE**)(*(BYTE**)(world + 0x4060) + 0x250) + (SIZE_T)index * 0x10B0;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER) { return NULL; }
+	}
+
+	static BYTE* HeadBody(BYTE* controller)
+	{
+		__try { return ResolveBody(*(BYTE**)(controller + 0x20), *(UINT16*)(controller + 0x28)); }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return NULL; }
+	}
+
+	static BYTE* PhysicsWorld(BYTE* controller)
+	{
+		__try { return *(BYTE**)(*(BYTE**)controller + 8); }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return NULL; }
+	}
+
+	static BOOL BodyOrigin(BYTE* body, FLOAT* out)
+	{
+		__try
+		{
+			FLOAT tmp[4] = {};
+			memcpy(out, ((BodyOriginFn)(g_exe + BODY_ORIGIN))(body, tmp), 12);
+			return isfinite(out[0]) && isfinite(out[1]) && isfinite(out[2]);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER) { return FALSE; }
+	}
+
+	/// Moves body so its origin is at target, and stops it.
+	static VOID PlaceBody(BYTE* body, const FLOAT* target)
+	{
+		FLOAT origin[3], position[3], delta[3];
+		const FLOAT still[3] = { 0, 0, 0 };
+		if (body == NULL || !isfinite(target[0]) || !isfinite(target[1]) || !isfinite(target[2]) || !BodyOrigin(body, origin))
+			return;
+		for (int i = 0; i < 3; i++)
+			delta[i] = target[i] - origin[i];
+		if (sqrtf(delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]) < 0.02f)
+			return;
+		__try
+		{
+			g_api.bodyGet(body, position, NULL, NULL);
+			for (int i = 0; i < 3; i++)
+				position[i] += delta[i];
+			g_api.bodySet(body, position, NULL, still);
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER) {}
+	}
+
+	static VOID PinBodies(BYTE* controller)
+	{
+		FLOAT at[3];
+		memcpy(at, controller + 0x60, sizeof(at));
+		PlaceBody(HeadBody(controller), at);
+		BYTE* world = PhysicsWorld(controller);
+		if (world == NULL)
+			return;
+		for (int pair = 0; pair < 2; pair++)
+		{
+			const FLOAT* offset = (const FLOAT*)(world + HAND_OFFSETS + pair * 0x20);
+			FLOAT target[3] = { at[0] - offset[0], at[1] - offset[1], at[2] - offset[2] };
+			for (int j = 0; j < 2; j++)
+				PlaceBody(HandBodyAt(world, HAND_SLOTS[pair][j]), target);
+		}
+	}
+
+	static BYTE* PlayerController()
+	{
+		BYTE* player = PlayerEntry();
+		return player == NULL ? NULL : *(BYTE**)(player + 8);
+	}
+
 	static VOID NoclipEnable()
 	{
 		if (g_originalStep == NULL)
@@ -175,18 +270,11 @@ namespace LeMods
 		ApplyTuning();
 	}
 
-	static BOOL SafeTeleport(BYTE* controller, const Trs* head)
-	{
-		__try { ((ControllerTeleportFn)(g_exe + CONTROLLER_TELEPORT))(controller, head); return TRUE; }
-		__except (EXCEPTION_EXECUTE_HANDLER) { return FALSE; }
-	}
-
 	static VOID NoclipDisable()
 	{
 		g_noclipOn = FALSE;
 		ApplyTuning();
-		BYTE* player = PlayerEntry();
-		BYTE* controller = player == NULL ? NULL : *(BYTE**)(player + 8);
+		BYTE* controller = PlayerController();
 		Trs head = {};
 		if (controller == NULL || controller != g_noclipController || !Head(&head))
 		{
@@ -194,20 +282,21 @@ namespace LeMods
 			InterlockedExchange(&g_flyStepped, 0);
 			return;
 		}
-		// Bring the proxy to where Jack is now, so the collision doesn't pull him back to where it got stuck.
+		// Bodies back on Jack, and his position held for a few more steps while the physics settles there.
+		PinBodies(controller);
 		memcpy(g_releasePosition, head.pos, sizeof(g_releasePosition));
-		BOOL ok = SafeTeleport(controller, &head);
-		g_log("[MODS] No clip: collision proxy moved to (%.1f %.1f %.1f)%s", head.pos[0], head.pos[1], head.pos[2],
-			ok ? "" : " (exception)");
 		InterlockedExchange(&g_releaseSteps, RELEASE_STEPS);
 	}
 
 	static VOID NoclipFrame(void*)
 	{
 		BYTE* player = PlayerEntry();
-		g_noclipController = player == NULL ? NULL : *(BYTE**)(player + 8);
+		BYTE* controller = player == NULL ? NULL : *(BYTE**)(player + 8);
+		g_noclipController = controller;
 		ApplyTuning();
 		ClearLock(player, LOCK_HAND_THRUST);
+		if (controller != NULL)
+			PinBodies(controller);
 		if (player == NULL)
 			g_noclipStatus.Set("Waiting for the player");
 		else
@@ -265,12 +354,6 @@ namespace LeMods
 			return isfinite(out[0]) && isfinite(out[1]) && isfinite(out[2]) && (out[0] != 0 || out[1] != 0 || out[2] != 0);
 		}
 		__except (EXCEPTION_EXECUTE_HANDLER) { return FALSE; }
-	}
-
-	static FLOAT Distance(const FLOAT* a, const FLOAT* b)
-	{
-		FLOAT dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
-		return sqrtf(dx * dx + dy * dy + dz * dz);
 	}
 
 	static VOID UpdateLabels()
