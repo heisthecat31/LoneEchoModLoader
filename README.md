@@ -3,23 +3,27 @@
 A mod loader for **Lone Echo** (PC VR). It installs as `dinput8.dll` next to the game, opens a **Lone Echo Mods**
 window on your desktop while you play, and comes with a set of built-in mods. You can also add your own as DLLs.
 
-## Required game version
+## Supported game versions
 
-The mod loader only works with **one build of `loneecho.exe`**: the **March 2019** build. Every game address it uses
-was found in that exe, so it switches itself off on any other build.
+The mod loader works with **two builds of `loneecho.exe`** (`Lone Echo\bin\win7\loneecho.exe`). It picks its game
+addresses by the exe's PE timestamp and switches itself off on any other build.
 
-| | |
-|---|---|
-| File | `Lone Echo\bin\win7\loneecho.exe` |
-| PE timestamp | `0x5C9D6E49` (built 29 March 2019, 01:00:57 UTC) |
-| Size | 22,336,512 bytes |
-| SHA-256 | `d7497a6c74a7f83117e5e0b3d48f9ae56b64a3fa00b788f3a817f25a26f47775` |
+| Build | PE timestamp | Size | SHA-256 |
+|---|---|---|---|
+| **March 2019** | `0x5C9D6E49` (29 March 2019, 01:00:57 UTC) | 22,336,512 bytes | `d7497a6c74a7f83117e5e0b3d48f9ae56b64a3fa00b788f3a817f25a26f47775` |
+| **April 2020** | `0x5E87A5F2` | 22,336,512 bytes | |
+
+The addresses were found in the March 2019 build. For April 2020 they were matched rather than tested in game: every
+function the loader calls or hooks has the same code in both builds (compared over its whole body, with relative
+offsets masked out), the vtables were found by their RTTI class names, and the globals through the code that reads
+them.
 
 To check your copy, start the game with the mod loader installed and open `bin\win7\lemods.log`:
 
-- `Lone Echo Mod Loader starting` means your build is supported.
-- `this loneecho.exe isn't the March 2019 build (timestamp ...); mods are off` means it isn't. The game still runs
-  normally, just without mods.
+- `Lone Echo Mod Loader starting (loneecho.exe March 2019 build)` (or `April 2020 build`) means your build is
+  supported.
+- `unsupported loneecho.exe build (timestamp ...); mods are off` means it isn't. The game still runs normally, just
+  without mods.
 
 Mods are also off on an EchoRelay dedicated server (`-mp` on the command line) and when you start the game with
 `-nomods`.
