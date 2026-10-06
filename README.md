@@ -11,7 +11,7 @@ addresses by the exe's PE timestamp and switches itself off on any other build.
 | Build | PE timestamp | Size | SHA-256 |
 |---|---|---|---|
 | **March 2019** | `0x5C9D6E49` (29 March 2019, 01:00:57 UTC) | 22,336,512 bytes | `d7497a6c74a7f83117e5e0b3d48f9ae56b64a3fa00b788f3a817f25a26f47775` |
-| **April 2020** | `0x5E87A5F2` | 22,336,512 bytes | |
+| **April 2020** | `0x5E87A5F2` | 22,336,512 bytes | `9e1a0335e8f04ab4c45ded770f145a6b38325f9ecb669874bb58051dbc889013` |
 
 The addresses were found in the March 2019 build. For April 2020 they were matched rather than tested in game: every
 function the loader calls or hooks has the same code in both builds (compared over its whole body, with relative
